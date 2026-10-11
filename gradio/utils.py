@@ -1155,6 +1155,15 @@ def get_function_with_locals(
 
 
 async def cancel_tasks(task_ids: set[str]) -> list[str]:
+    """Cancel asyncio tasks by the name given to them via set_task_name().
+
+    task_ids entries that themselves contain `<gradio-sep>` name a single
+    event (session_fn<gradio-sep>event_id) and only cancel the task whose
+    full name matches. Entries without the separator keep the historical
+    behavior of matching every running task of that session/fn pair, which
+    the `cancels=` dependency path relies on (batch tasks are not named per
+    event, so a session_fn prefix is the only selector available there).
+    """
     tasks = [(task, task.get_name()) for task in asyncio.all_tasks()]
     event_ids: list[str] = []
     matching_tasks = []
@@ -1162,7 +1171,7 @@ async def cancel_tasks(task_ids: set[str]) -> list[str]:
         if "<gradio-sep>" not in name:
             continue
         task_id, event_id = name.split("<gradio-sep>")
-        if task_id in task_ids:
+        if task_id in task_ids or name in task_ids:
             matching_tasks.append(task)
             event_ids.append(event_id)
             task.cancel()

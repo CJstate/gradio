@@ -1715,7 +1715,12 @@ class App(FastAPI):
 
         @router.post("/cancel")
         async def cancel_event(body: CancelBody):
-            await cancel_tasks({f"{body.session_hash}_{body.fn_index}"})
+            # Name the specific event so that only the task running that
+            # event is cancelled; other running events of the same function
+            # in the same session must keep running (issue #13952).
+            await cancel_tasks(
+                {f"{body.session_hash}_{body.fn_index}<gradio-sep>{body.event_id}"}
+            )
             blocks = app.get_blocks()
             # Need to complete the job so that the client disconnects
             session_open = (

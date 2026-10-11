@@ -2117,6 +2117,52 @@ class TestCancel:
         assert "HELLO FROM LONG JOB" not in captured.out
 
     @pytest.mark.asyncio
+    async def test_cancel_tasks_with_event_id_only_cancels_that_event(self):
+        # Regression test for issue #13952: cancelling one event of a
+        # function must not cancel the other running events of the same
+        # function in the same session.
+        async def long_job():
+            await asyncio.sleep(10)
+
+        cancelled = asyncio.create_task(long_job())
+        cancelled.set_name("session_0<gradio-sep>event-one")
+        kept_running = asyncio.create_task(long_job())
+        kept_running.set_name("session_0<gradio-sep>event-two")
+
+        returned_event_ids = await cancel_tasks({"session_0<gradio-sep>event-one"})
+
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+        try:
+            # give cancel_tasks' gather a chance to observe a non-cancelled task
+            await asyncio.sleep(0)
+            kept_running.cancel()
+            await kept_running
+        except asyncio.CancelledError:
+            pass
+
+        assert returned_event_ids == ["event-one"]
+
+    @pytest.mark.asyncio
+    async def test_cancel_tasks_without_event_id_cancels_all_matching_tasks(self):
+        # The `cancels=` dependency path (and batch tasks, which have no
+        # per-event name) still cancels every running task of the pair.
+        async def long_job():
+            await asyncio.sleep(10)
+
+        task_one = asyncio.create_task(long_job())
+        task_one.set_name("session_0<gradio-sep>event-one")
+        task_two = asyncio.create_task(long_job())
+        task_two.set_name("session_0<gradio-sep>event-two")
+
+        returned_event_ids = await cancel_tasks({"session_0"})
+
+        for task in (task_one, task_two):
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert sorted(returned_event_ids) == ["event-one", "event-two"]
+
+    @pytest.mark.asyncio
     async def test_cancel_function_with_multiple_blocks(self, capsys):
         async def long_job():
             await asyncio.sleep(10)
