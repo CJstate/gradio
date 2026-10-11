@@ -467,11 +467,15 @@ class Video(StreamingOutput, Component):
         ) or self.watermark.watermark:
             global_option_list = ["-y"]
             inputs_dict = {video: None}
-            output_file_name = video[0 : video.rindex(".") + 1]
-            if self.format is not None:
-                output_file_name += self.format
-            else:
-                output_file_name += returned_format
+            # Write the converted/watermarked output into the Gradio cache
+            # instead of next to the source file: the source may be a
+            # relative path in the working directory, in which case ffmpeg
+            # would create or overwrite a file there that no temp file set
+            # tracks (issues #13953 and #13954).
+            output_file_name = str(
+                Path(self.GRADIO_CACHE)
+                / f"{Path(video).stem}.{self.format or returned_format}"
+            )
             if self.watermark.watermark:
                 inputs_dict[str(self.watermark.watermark)] = None
                 pos = self.watermark.position
@@ -492,10 +496,10 @@ class Video(StreamingOutput, Component):
                     watermark_cmd = "overlay=W-w-5:H-h-5"
 
                 global_option_list += ["-filter_complex", watermark_cmd]
-                output_file_name = (
-                    Path(output_file_name).stem
-                    + "_watermarked"
-                    + Path(output_file_name).suffix
+                output_file_name = str(
+                    Path(output_file_name).with_stem(
+                        Path(output_file_name).stem + "_watermarked"
+                    )
                 )
             ff = FFmpeg(  # type: ignore
                 inputs=inputs_dict,

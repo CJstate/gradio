@@ -425,6 +425,70 @@ class TestVideo:
         assert processed_video == postprocessed_video
 
     @pytest.mark.requires_ffmpeg
+    def test_watermarked_video_is_written_to_cache_not_cwd(self, tmp_path, monkeypatch):
+        # Regression test for issues #13953/#13954: the watermarked output
+        # used to be written next to the source (or into the CWD for a
+        # relative source path), where no temp file set tracks it and an
+        # existing file of the same name would be silently overwritten.
+        monkeypatch.setenv("GRADIO_TEMP_DIR", str(tmp_path / "cache"))
+        (tmp_path / "cache").mkdir()
+
+        source = tmp_path / "clip.mp4"
+        shutil.copy("test/test_files/video_sample.mp4", source)
+
+        component = gr.Video(
+            watermark=gr.WatermarkOptions(
+                watermark="test/test_files/bus.png", position="bottom-right"
+            )
+        )
+        result = component.postprocess(str(source)).model_dump()
+
+        assert Path(result["path"]).is_relative_to(tmp_path / "cache")
+        assert "_watermarked" in Path(result["path"]).name
+        assert not (tmp_path / "clip_watermarked.mp4").exists()
+        assert (tmp_path / "clip.mp4").read_bytes() == Path(
+            "test/test_files/video_sample.mp4"
+        ).read_bytes()
+
+    @pytest.mark.requires_ffmpeg
+    def test_format_conversion_does_not_overwrite_existing_file(
+        self, tmp_path, monkeypatch
+    ):
+        # Regression test for issue #13954: gr.Video(format=...) must not
+        # ffmpeg -y over an unrelated file with the target name that
+        # happens to sit next to the source. The source must be playable so
+        # postprocess does not route it through convert_video_to_playable_mp4,
+        # which already writes into the cache.
+        monkeypatch.setenv("GRADIO_TEMP_DIR", str(tmp_path / "cache"))
+        (tmp_path / "cache").mkdir()
+
+        source = tmp_path / "clip.webm"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "quiet",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=0.4:size=64x64:rate=10",
+                "-c:v",
+                "libvpx",
+                str(source),
+            ],
+            check=True,
+        )
+        decoy = tmp_path / "clip.mp4"
+        decoy.write_bytes(b"precious, not a video")
+
+        component = gr.Video(format="mp4")
+        result = component.postprocess(str(source)).model_dump()
+
+        assert Path(result["path"]).is_relative_to(tmp_path / "cache")
+        assert decoy.read_bytes() == b"precious, not a video"
+
+    @pytest.mark.requires_ffmpeg
     @pytest.mark.asyncio
     async def test_stream_output_returns_a_flat_payload_and_chunk(self, tmp_path):
         component = gr.Video(streaming=True)
